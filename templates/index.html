@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="card border-0 shadow-sm">
+	<div class="card-body p-4">
+		<h3 class="card-title mb-2">Welcome to Delta Sharing Browser</h3>
+		<p class="text-muted">Explore shares, schemas, and tables; inspect metadata and files; preview and export data.</p>
+		{% if not has_profile %}
+			<a class="btn btn-primary" href="/profile">Add Profile</a>
+		{% else %}
+			<a class="btn btn-primary" href="/shares">Browse Shares</a>
+		{% endif %}
+	</div>
+</div>
+{% endblock %}

@@ -1,0 +1,13 @@
+Flask==3.0.3
+Werkzeug>=3.0.0
+Jinja2>=3.1.0
+itsdangerous>=2.1.0
+click>=8.1.0
+
+# Delta Sharing + data stack
+delta-sharing==1.3.3
+pandas>=2.0.0
+pyarrow>=15.0.0
+
+# Optional: gunicorn for production serve
+gunicorn>=21.2.0

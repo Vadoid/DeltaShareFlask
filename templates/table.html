@@ -1,0 +1,304 @@
+{% extends 'base.html' %}
+{% block content %}
+<h3>Table: {{ share }}.{{ schema }}.{{ table }}</h3>
+<ul class="nav nav-tabs mb-3">
+	<li class="nav-item"><a class="nav-link {% if tab == 'overview' %}active{% endif %}" href="{{ url_for('table_details', share=share, schema=schema, table=table, tab='overview') }}">Overview</a></li>
+	<li class="nav-item"><a class="nav-link {% if tab == 'history' %}active{% endif %}" href="{{ url_for('table_details', share=share, schema=schema, table=table, tab='history') }}">History</a></li>
+	<li class="nav-item"><a class="nav-link {% if tab == 'files' %}active{% endif %}" href="{{ url_for('table_details', share=share, schema=schema, table=table, tab='files') }}">Files</a></li>
+	<li class="nav-item"><a class="nav-link {% if tab == 'preview' %}active{% endif %}" href="{{ url_for('table_details', share=share, schema=schema, table=table, tab='preview') }}">Preview</a></li>
+</ul>
+
+{% if tab == 'overview' %}
+<div class="row">
+	<div class="col-md-6">
+		<h5>Metadata</h5>
+		{% if metadata_error %}
+			<div class="alert alert-warning" role="alert">{{ metadata_error | safe }}</div>
+		{% else %}
+			{% if metadata_summary %}
+				<table class="table table-sm table-bordered">
+					<tbody>
+						<tr><th>Delta table version</th><td>{{ metadata_summary.delta_table_version }}</td></tr>
+						<tr><th>Format</th><td>{{ metadata_summary.format_provider }}</td></tr>
+						<tr><th>Num files</th><td>{{ metadata_summary.num_files }}</td></tr>
+						<tr><th>Size (bytes)</th><td>{{ metadata_summary.size }}</td></tr>
+						<tr><th>Version</th><td>{{ metadata_summary.version }}</td></tr>
+						<tr><th>Partition columns</th><td>{{ metadata_summary.partition_columns_count }}</td></tr>
+						<tr><th>Min reader version</th><td>{{ metadata_summary.min_reader_version }}</td></tr>
+						<tr><th>Min writer version</th><td>{{ metadata_summary.min_writer_version }}</td></tr>
+					</tbody>
+				</table>
+			{% endif %}
+			{% if schema_columns %}
+				<h6>Columns</h6>
+				<table class="table table-sm table-striped">
+					<thead><tr><th>Name</th><th>Type</th><th>Nullable</th></tr></thead>
+					<tbody>
+						{% for col in schema_columns %}
+							<tr><td>{{ col.name }}</td><td>{{ col.type }}</td><td>{{ col.nullable }}</td></tr>
+						{% endfor %}
+					</tbody>
+				</table>
+			{% endif %}
+			{% if metadata_json %}
+				<p>
+					<a class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse" href="#rawMeta" role="button" aria-expanded="false" aria-controls="rawMeta">Show raw JSON</a>
+				</p>
+				<div class="collapse" id="rawMeta">
+					<pre class="bg-light p-2 border rounded" style="white-space: pre-wrap;">{{ metadata_json }}</pre>
+				</div>
+			{% endif %}
+		{% endif %}
+	</div>
+	<div class="col-md-6">
+		<h5>Data Size</h5>
+		<ul>
+			<li>Files: {{ num_files if num_files is not none else 'N/A' }}</li>
+			<li>Total size (bytes): {{ total_size if total_size is not none else 'N/A' }}</li>
+		</ul>
+		<div class="mt-2">
+			<a class="btn btn-outline-primary btn-sm" href="{{ url_for('export_table_preview', share=share, schema=schema, table=table, format='csv', page_size=1000) }}">Export CSV</a>
+			<a class="btn btn-outline-primary btn-sm" href="{{ url_for('export_table_preview', share=share, schema=schema, table=table, format='parquet', page_size=1000) }}">Export Parquet</a>
+		</div>
+	</div>
+</div>
+{% elif tab == 'history' %}
+<h5>Table History</h5>
+<div class="alert alert-info mb-3">
+	<strong>Note:</strong> Time travel shows cumulative changes from version 0 to the selected version. Use version numbers (0, 1, 2, etc.) to query historical data.
+	<br><br>
+	<strong>Requirements:</strong> Table history requires <code>tableConfig.cdfEnabled=true</code> to be enabled on the source table for time travel queries to work.
+</div>
+{% if table_history %}
+	<div class="mb-3">
+		<button class="btn btn-primary btn-sm" onclick="compareVersions()">Compare Versions</button>
+		<button class="btn btn-outline-secondary btn-sm" onclick="timeTravel()">Time Travel Query</button>
+	</div>
+	<table class="table table-sm table-striped">
+		<thead>
+			<tr>
+				<th><input type="checkbox" id="selectAll" onchange="toggleAllVersions()"></th>
+				<th>Version</th>
+				<th>Timestamp</th>
+				<th>Operation</th>
+				<th>Operation Metrics</th>
+				<th>Actions</th>
+			</tr>
+		</thead>
+		<tbody>
+			{% for entry in table_history %}
+			<tr>
+				<td><input type="checkbox" class="version-checkbox" value="{{ entry.version }}"></td>
+				<td><strong>{{ entry.version }}</strong></td>
+				<td>{{ entry.timestamp }}</td>
+				<td><span class="badge bg-{{ 'success' if entry.operation == 'WRITE' else 'info' if entry.operation == 'ADD' else 'warning' }}">{{ entry.operation }}</span></td>
+				<td>
+					{% if entry.operation_metrics %}
+						<small class="text-muted">
+							{% for key, value in entry.operation_metrics.items() %}
+								{{ key }}: {{ value }}<br>
+							{% endfor %}
+						</small>
+					{% else %}
+						-
+					{% endif %}
+				</td>
+				<td>
+					{% if entry.version != 'Unknown' %}
+						<a href="{{ url_for('table_details', share=share, schema=schema, table=table, tab='preview', version=entry.version) }}" class="btn btn-outline-primary btn-sm">View Data</a>
+					{% else %}
+						<button class="btn btn-outline-secondary btn-sm" onclick="timeTravel()">Enter Version</button>
+					{% endif %}
+				</td>
+			</tr>
+			{% endfor %}
+		</tbody>
+	</table>
+{% else %}
+	<p class="text-muted">No history available. Use Time Travel to query specific versions.</p>
+{% endif %}
+
+<script>
+function toggleAllVersions() {
+	const selectAll = document.getElementById('selectAll');
+	const checkboxes = document.querySelectorAll('.version-checkbox');
+	checkboxes.forEach(cb => cb.checked = selectAll.checked);
+}
+
+function compareVersions() {
+	const selected = Array.from(document.querySelectorAll('.version-checkbox:checked')).map(cb => cb.value);
+	if (selected.length !== 2) {
+		alert('Please select exactly 2 versions to compare');
+		return;
+	}
+	window.location.href = `{{ url_for('table_details', share=share, schema=schema, table=table, tab='preview') }}?compare=${selected[0]},${selected[1]}`;
+}
+
+function timeTravel() {
+	const version = prompt('Enter version number for time travel (e.g., 0, 1, 2):');
+	if (version && !isNaN(version)) {
+		window.location.href = `{{ url_for('table_details', share=share, schema=schema, table=table, tab='preview') }}?version=${version}`;
+	}
+}
+</script>
+{% elif tab == 'files' %}
+<h5>Files</h5>
+{% if files %}
+	<table class="table table-sm table-striped">
+		<thead><tr><th>Path</th><th>Size</th><th>Partition values</th></tr></thead>
+		<tbody>
+			{% for f in files %}
+				<tr>
+					<td><a href="{{ f.url }}" target="_blank">{{ f.url }}</a></td>
+					<td>{{ f.size }}</td>
+					<td>
+						{% if f.partition_values %}
+							{{ f.partition_values }}
+						{% else %}—{% endif %}
+					</td>
+				</tr>
+			{% endfor %}
+		</tbody>
+	</table>
+{% else %}
+	<p class="text-muted">No files found or listing not supported.</p>
+{% endif %}
+{% elif tab == 'preview' %}
+<h5>Preview
+	{% if version %}
+		<small class="text-muted">(Version {{ version }})</small>
+	{% endif %}
+	{% if comparison_data %}
+		<small class="text-muted">(Comparing versions {{ comparison_data.version1.version }} vs {{ comparison_data.version2.version }})</small>
+	{% endif %}
+</h5>
+<form class="row g-2 mb-3" method="get">
+	<input type="hidden" name="tab" value="preview" />
+	<div class="col-md-4">
+		<label class="form-label">Columns (comma-separated)</label>
+		<input class="form-control form-control-sm" type="text" name="columns" value="{{ selected_columns }}" placeholder="col1,col2" />
+		<small class="text-muted">Available: {{ preview_df.columns.tolist() if preview_df is not none else 'Load data first' }}</small>
+	</div>
+	<div class="col-md-2">
+		<label class="form-label">Page size</label>
+		<input class="form-control form-control-sm" type="number" name="page_size" value="{{ page_size }}" min="5" max="500" />
+	</div>
+	<div class="col-md-2 d-flex align-items-end">
+		<button class="btn btn-primary btn-sm" type="submit">Apply</button>
+	</div>
+</form>
+{% if preview_error %}
+	<div class="alert alert-warning">Preview error: {{ preview_error }}</div>
+{% elif preview_df is not none %}
+	<div class="d-flex justify-content-between align-items-center mb-2">
+		<div>
+			<strong>Page:</strong> {{ page }}
+			<strong>Page size:</strong> {{ page_size }}
+		</div>
+		<div class="btn-group">
+			{% if prev_url %}
+				<a class="btn btn-outline-secondary btn-sm" href="{{ prev_url }}">Prev</a>
+			{% else %}
+				<button class="btn btn-outline-secondary btn-sm" disabled>Prev</button>
+			{% endif %}
+			{% if next_url %}
+				<a class="btn btn-outline-secondary btn-sm" href="{{ next_url }}">Next</a>
+			{% else %}
+				<button class="btn btn-outline-secondary btn-sm" disabled>Next</button>
+			{% endif %}
+		</div>
+	</div>
+	{% if comparison_data %}
+		<div class="row mb-4">
+			<div class="col-md-6">
+				<h6>Version {{ comparison_data.version1.version }} ({{ comparison_data.version1.rows }} rows)</h6>
+				<div class="table-responsive">
+					<table class="table table-sm table-striped">
+						<thead>
+							<tr>
+								{% for col in comparison_data.version1.data.columns %}
+									<th>{{ col }}</th>
+								{% endfor %}
+							</tr>
+						</thead>
+						<tbody>
+							{% for _, row in comparison_data.version1.data.head(10).iterrows() %}
+							<tr>
+								{% for col in comparison_data.version1.data.columns %}
+									<td>{{ row[col] }}</td>
+								{% endfor %}
+							</tr>
+							{% endfor %}
+						</tbody>
+					</table>
+				</div>
+			</div>
+			<div class="col-md-6">
+				<h6>Version {{ comparison_data.version2.version }} ({{ comparison_data.version2.rows }} rows)</h6>
+				<div class="table-responsive">
+					<table class="table table-sm table-striped">
+						<thead>
+							<tr>
+								{% for col in comparison_data.version2.data.columns %}
+									<th>{{ col }}</th>
+								{% endfor %}
+							</tr>
+						</thead>
+						<tbody>
+							{% for _, row in comparison_data.version2.data.head(10).iterrows() %}
+							<tr>
+								{% for col in comparison_data.version2.data.columns %}
+									<td>{{ row[col] }}</td>
+								{% endfor %}
+							</tr>
+							{% endfor %}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+		<div class="alert alert-info">
+			<h6>Comparison Summary</h6>
+			<ul class="mb-0">
+				<li><strong>Row count difference:</strong> {{ comparison_data.differences.row_count_diff }}</li>
+				{% if comparison_data.differences.column_differences %}
+					{% for diff in comparison_data.differences.column_differences %}
+						<li><strong>Columns:</strong> {{ diff }}</li>
+					{% endfor %}
+				{% endif %}
+				{% if comparison_data.differences.data_differences %}
+					{% for diff in comparison_data.differences.data_differences %}
+						<li><strong>Data:</strong> {{ diff }}</li>
+					{% endfor %}
+				{% endif %}
+			</ul>
+		</div>
+	{% else %}
+		<div class="table-responsive">
+			<table class="table table-sm table-striped">
+				<thead>
+					<tr>
+						{% for col in preview_df.columns %}
+							<th>{{ col }}</th>
+						{% endfor %}
+					</tr>
+				</thead>
+				<tbody>
+					{% for _, row in preview_df.iterrows() %}
+						<tr>
+							{% for col in preview_df.columns %}
+								<td>{{ row[col] }}</td>
+							{% endfor %}
+						</tr>
+					{% endfor %}
+				</tbody>
+			</table>
+		</div>
+	{% endif %}
+{% else %}
+	<p class="text-muted">No data preview.</p>
+{% endif %}
+{% endif %}
+
+<a href="/shares/{{ share }}/{{ schema }}/tables" class="btn btn-outline-secondary btn-sm mt-3">Back</a>
+{% endblock %}

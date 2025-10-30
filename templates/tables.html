@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+	<ol class="breadcrumb">
+		<li class="breadcrumb-item"><a href="/shares">Shares</a></li>
+		<li class="breadcrumb-item"><a href="/shares/{{ share }}/schemas">{{ share }}</a></li>
+		<li class="breadcrumb-item"><a href="/shares/{{ share }}/{{ schema }}/tables">{{ schema }}</a></li>
+		<li class="breadcrumb-item active" aria-current="page">Tables</li>
+	</ol>
+</nav>
+<h3>Tables in {{ share }}.{{ schema }}</h3>
+<table class="table table-sm table-striped align-middle">
+	<thead>
+		<tr>
+			<th>Table</th>
+			<th>Description</th>
+		</tr>
+	</thead>
+	<tbody>
+		{% for t in tables %}
+		<tr>
+			<td><a href="/shares/{{ share }}/{{ schema }}/tables/{{ t.name }}">{{ t.name }}</a></td>
+			<td>{{ t.description or t.comment or '' }}</td>
+		</tr>
+		{% endfor %}
+		{% if not tables %}
+		<tr><td colspan="2" class="text-muted">No tables match your search.</td></tr>
+		{% endif %}
+	</tbody>
+</table>
+<a href="/shares/{{ share }}/schemas" class="btn btn-outline-secondary btn-sm">Back</a>
+{% endblock %}

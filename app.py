@@ -169,7 +169,7 @@ def table_details(share: str, schema: str, table: str):
 	if not client:
 		return redirect(url_for("index"))
 
-	# Active tab: overview | history | files | preview
+	# Active tab: overview | files | preview (history removed)
 	tab = request.args.get("tab", "overview")
 
 	# Table constructor expects (name, share, schema)
@@ -179,6 +179,9 @@ def table_details(share: str, schema: str, table: str):
 	metadata_error: Optional[str] = None
 	metadata_summary: Optional[dict] = None
 	schema_columns: Optional[list] = None
+	# Summary size info for right-hand panel
+	num_files: Optional[int] = None
+	total_size: Optional[int] = None
 
 	# Overview tab: metadata
 	if tab == "overview":
@@ -253,6 +256,9 @@ def table_details(share: str, schema: str, table: str):
 						"min_reader_version": p.get("min_reader_version"),
 						"min_writer_version": p.get("min_writer_version"),
 					}
+					# Populate summary values for display if available
+					num_files = metadata_summary.get("num_files")
+					total_size = metadata_summary.get("size")
 				except Exception:
 					metadata_summary = None
 		except Exception as exc:
@@ -287,51 +293,14 @@ def table_details(share: str, schema: str, table: str):
 		try:
 			if hasattr(client, "list_files_in_table"):
 				files = client.list_files_in_table(ds_table)
+				# If metadata lacked size info, compute here
+				if files is not None and (num_files is None or total_size is None):
+					num_files = len(files)
+					total_size = sum(getattr(f, "size", 0) for f in files)
 		except Exception as exc:
 			flash(f"Failed to list files: {exc}", "error")
 
-	# History tab: get table history
-	table_history = None
-	if tab == "history":
-		try:
-			# Get current version from metadata as fallback
-			current_version = None
-			try:
-				if hasattr(client, "_rest_client") and hasattr(client._rest_client, "query_table_metadata"):
-					metadata = client._rest_client.query_table_metadata(ds_table)
-					if hasattr(metadata, "metadata") and hasattr(metadata.metadata, "version"):
-						current_version = metadata.metadata.version
-					elif isinstance(metadata, dict) and "metadata" in metadata:
-						current_version = metadata["metadata"].get("version")
-			except Exception:
-				pass
-			
-			# Note: Full history requires Spark or direct access to Delta log
-			# For now, show current version and allow manual version entry
-			if current_version is not None:
-				table_history = [{
-					'version': current_version,
-					'timestamp': 'Current',
-					'operation': 'CURRENT',
-					'operation_metrics': {},
-					'operation_parameters': {},
-					'is_blind_append': False,
-					'engine_info': 'N/A'
-				}]
-			else:
-				# Still show an entry if we can't get version
-				table_history = [{
-					'version': 'Unknown',
-					'timestamp': 'Current',
-					'operation': 'CURRENT',
-					'operation_metrics': {},
-					'operation_parameters': {},
-					'is_blind_append': False,
-					'engine_info': 'N/A'
-				}]
-		except Exception as exc:
-			print(f"DEBUG: History error: {exc}")
-			flash(f"Note: Full history requires Spark. Showing current version only. {exc}", "info")
+    # History functionality removed
 
 	# Preview tab: filtering, columns, pagination
 	preview_df = None
@@ -354,9 +323,7 @@ def table_details(share: str, schema: str, table: str):
 	selected_columns = request.args.get("columns", "").strip()
 	filter_expr = request.args.get("where", "").strip()
 	
-	# Version and comparison parameters
-	version = request.args.get("version")
-	compare_versions = request.args.get("compare")
+	# Time travel and comparison removed
 
 	fetch_limit = min(page * page_size, 5000)
 	try:
@@ -366,28 +333,8 @@ def table_details(share: str, schema: str, table: str):
 			columns_arg = [c.strip() for c in selected_columns.split(",") if c.strip()]
 			if not columns_arg:
 				columns_arg = None
-		# Load data with version support
-		if version:
-			# For versioned queries, use load_table_changes_as_pandas
-			try:
-				table_url = f"{profile_path}#{share}.{schema}.{table}"
-				version_num = int(version)
-				# Load changes from version 0 to the specified version
-				full_df = delta_sharing.load_table_changes_as_pandas(
-					table_url, 
-					starting_version=0, 
-					ending_version=version_num,
-					convert_in_batches=True
-				)
-				# Apply limit after loading
-				if len(full_df) > fetch_limit:
-					full_df = full_df.head(fetch_limit)
-			except Exception as e:
-				print(f"DEBUG: Version query failed: {e}")
-				preview_error = f"Time travel failed: {e}"
-				full_df = None
-		else:
-			full_df = delta_sharing.load_as_pandas(profile_url, limit=fetch_limit)
+		# Load data (no time travel)
+		full_df = delta_sharing.load_as_pandas(profile_url, limit=fetch_limit)
 		if isinstance(full_df, pd.DataFrame):
 			# Convert dtypes to proper types for better filtering
 			full_df = full_df.convert_dtypes()
@@ -428,43 +375,7 @@ def table_details(share: str, schema: str, table: str):
 	except Exception as exc:
 		preview_error = str(exc)
 	
-	# Handle version comparison
-	comparison_data = None
-	if compare_versions and not preview_error:
-		try:
-			versions = compare_versions.split(',')
-			if len(versions) == 2:
-				v1, v2 = int(versions[0]), int(versions[1])
-				table_url = f"{profile_path}#{share}.{schema}.{table}"
-				
-				# Load data for both versions using table changes
-				df_v1 = delta_sharing.load_table_changes_as_pandas(
-					table_url, 
-					starting_version=0, 
-					ending_version=v1,
-					convert_in_batches=True
-				)
-				df_v2 = delta_sharing.load_table_changes_as_pandas(
-					table_url, 
-					starting_version=0, 
-					ending_version=v2,
-					convert_in_batches=True
-				)
-				
-				# Apply limits
-				if len(df_v1) > fetch_limit:
-					df_v1 = df_v1.head(fetch_limit)
-				if len(df_v2) > fetch_limit:
-					df_v2 = df_v2.head(fetch_limit)
-				
-				if isinstance(df_v1, pd.DataFrame) and isinstance(df_v2, pd.DataFrame):
-					comparison_data = {
-						'version1': {'version': v1, 'data': df_v1, 'rows': len(df_v1)},
-						'version2': {'version': v2, 'data': df_v2, 'rows': len(df_v2)},
-						'differences': _compare_dataframes(df_v1, df_v2)
-					}
-		except Exception as exc:
-			preview_error = f"Version comparison failed: {exc}"
+	# Version comparison removed
 
 	def _url_for_page(p: int) -> str:
 		args = request.args.to_dict(flat=True)
@@ -477,6 +388,9 @@ def table_details(share: str, schema: str, table: str):
 	next_url = _url_for_page(page + 1) if preview_df is not None and len(preview_df) == page_size else None
 
 	shares_all, schemas_in_share, tables_in_schema = build_sidebar_lists(client, share, schema)
+	# Human-readable size for UI
+	total_size_human = _format_bytes(total_size) if isinstance(total_size, int) else None
+
 	return render_template(
 		"table.html",
 		share=share,
@@ -488,14 +402,17 @@ def table_details(share: str, schema: str, table: str):
 		metadata_summary=metadata_summary,
 		schema_columns=schema_columns,
 		files=files,
-		table_history=table_history,
+		table_history=None,
 		preview_df=preview_df,
 		preview_error=preview_error,
-		comparison_data=comparison_data,
+		comparison_data=None,
+		num_files=num_files,
+		total_size=total_size,
+		total_size_human=total_size_human,
 		selected_columns=selected_columns,
-		filter_expr=filter_expr,
-		page=page,
-		page_size=page_size,
+        filter_expr=filter_expr,
+        page=page,
+        page_size=page_size,
 		prev_url=prev_url,
 		next_url=next_url,
 		profile_path=profile_path,
@@ -553,106 +470,24 @@ def _normalize_query_expr(expr: str, columns: list) -> str:
 	return result
 
 
-def _parse_table_history(history_response) -> list:
-	"""Parse table history response into a list of history entries."""
-	history_entries = []
-	try:
-		if hasattr(history_response, 'history'):
-			history_data = history_response.history
-		elif isinstance(history_response, dict) and 'history' in history_response:
-			history_data = history_response['history']
-		else:
-			history_data = history_response
-		
-		if isinstance(history_data, list):
-			for entry in history_data:
-				if isinstance(entry, dict):
-					history_entries.append({
-						'version': entry.get('version', 'N/A'),
-						'timestamp': entry.get('timestamp', 'N/A'),
-						'operation': entry.get('operation', 'N/A'),
-						'operation_metrics': entry.get('operationMetrics', {}),
-						'operation_parameters': entry.get('operationParameters', {}),
-						'is_blind_append': entry.get('isBlindAppend', False),
-						'engine_info': entry.get('engineInfo', 'N/A')
-					})
-				elif hasattr(entry, '__dict__'):
-					# Handle object with attributes
-					history_entries.append({
-						'version': getattr(entry, 'version', 'N/A'),
-						'timestamp': getattr(entry, 'timestamp', 'N/A'),
-						'operation': getattr(entry, 'operation', 'N/A'),
-						'operation_metrics': getattr(entry, 'operationMetrics', {}),
-						'operation_parameters': getattr(entry, 'operationParameters', {}),
-						'is_blind_append': getattr(entry, 'isBlindAppend', False),
-						'engine_info': getattr(entry, 'engineInfo', 'N/A')
-					})
-	except Exception as e:
-		print(f"Error parsing table history: {e}")
-	
-	return history_entries
+def _format_bytes(num_bytes: Optional[int]) -> Optional[str]:
+	"""Convert a byte count to a human-readable string (KB, MB, GB, TB)."""
+	if num_bytes is None:
+		return None
+	units = ["bytes", "KB", "MB", "GB", "TB", "PB"]
+	value = float(num_bytes)
+	unit_index = 0
+	while value >= 1024.0 and unit_index < len(units) - 1:
+		value /= 1024.0
+		unit_index += 1
+	if unit_index == 0:
+		return f"{int(value)} {units[unit_index]}"
+	return f"{value:.2f} {units[unit_index]}"
 
 
-def _get_history_from_metadata(client, ds_table) -> list:
-	"""Fallback method to get basic history info from metadata."""
-	history_entries = []
-	try:
-		# Try to get current version from metadata
-		if hasattr(client, "_rest_client") and hasattr(client._rest_client, "query_table_metadata"):
-			metadata = client._rest_client.query_table_metadata(ds_table)
-			if hasattr(metadata, 'metadata') and hasattr(metadata.metadata, 'version'):
-				version = metadata.metadata.version
-				history_entries.append({
-					'version': version,
-					'timestamp': 'Current',
-					'operation': 'CURRENT',
-					'operation_metrics': {},
-					'operation_parameters': {},
-					'is_blind_append': False,
-					'engine_info': 'N/A'
-				})
-	except Exception as e:
-		print(f"Error getting history from metadata: {e}")
-	
-	return history_entries
-
-
-def _compare_dataframes(df1, df2):
-	"""Compare two dataframes and return differences."""
-	differences = {
-		'row_count_diff': len(df2) - len(df1),
-		'column_differences': [],
-		'data_differences': []
-	}
-	
-	# Compare row counts
-	if len(df1) != len(df2):
-		differences['row_count_diff'] = len(df2) - len(df1)
-	
-	# Compare columns
-	cols1 = set(df1.columns)
-	cols2 = set(df2.columns)
-	added_cols = cols2 - cols1
-	removed_cols = cols1 - cols2
-	
-	if added_cols:
-		differences['column_differences'].append(f"Added columns: {list(added_cols)}")
-	if removed_cols:
-		differences['column_differences'].append(f"Removed columns: {list(removed_cols)}")
-	
-	# Compare common columns for data differences
-	common_cols = cols1 & cols2
-	if common_cols:
-		# Sample comparison for first few rows
-		min_rows = min(len(df1), len(df2), 10)
-		for col in list(common_cols)[:5]:  # Limit to first 5 columns
-			if min_rows > 0:
-				col1_vals = df1[col].head(min_rows).tolist()
-				col2_vals = df2[col].head(min_rows).tolist()
-				if col1_vals != col2_vals:
-					differences['data_differences'].append(f"Column '{col}' has different values in first {min_rows} rows")
-	
-	return differences
+def _compare_dataframes(*args, **kwargs):
+    # Placeholder retained to avoid import issues if referenced elsewhere; not used.
+    return {}
 
 
 if __name__ == "__main__":

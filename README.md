@@ -1,6 +1,7 @@
 # Delta Sharing Flask Browser
 
-A lightweight Flask web app to **explore Delta Sharing data resources**—including shares, schemas, tables, metadata, and data previews—**using only Python and Pandas (no Spark required).**
+A lightweight Flask web app to **explore Delta Sharing data resources** — including shares, schemas, tables, metadata, and data previews — **using only Python and Pandas (no Spark required).**
+Why I created it? Sometimes it's not that user-friendly to explore what is available in delta shares and having a simple app to browse shares is helpful.
 
 ---
 
